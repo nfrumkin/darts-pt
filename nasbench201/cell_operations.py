@@ -1,5 +1,7 @@
+from typing_extensions import OrderedDict
 import torch
 import torch.nn as nn
+from hw_utils import *
 
 __all__ = ['OPS', 'ResNetBasicblock', 'SearchSpaceNames']
 
@@ -50,19 +52,25 @@ class NoiseOp(nn.Module):
             x_new = x
         noise = x_new.data.new(x_new.size()).normal_(self.mean, self.std)
         return noise
+    
+    def get_hw_cost(self, x, metric):
+      return 0, self.forward(x)
 
 class ReLUConvBN(nn.Module):
 
   def __init__(self, C_in, C_out, kernel_size, stride, padding, dilation, affine, track_running_stats=True):
     super(ReLUConvBN, self).__init__()
-    self.op = nn.Sequential(
-      nn.ReLU(inplace=False),
-      nn.Conv2d(C_in, C_out, kernel_size, stride=stride, padding=padding, dilation=dilation, bias=False),
-      nn.BatchNorm2d(C_out, affine=affine, track_running_stats=track_running_stats)
-    )
+    self.op = nn.Sequential(OrderedDict([
+      ('relu', nn.ReLU(inplace=False)),
+      ('conv', nn.Conv2d(C_in, C_out, kernel_size, stride=stride, padding=padding, dilation=dilation, bias=False)),
+      ('bn', nn.BatchNorm2d(C_out, affine=affine, track_running_stats=track_running_stats))
+    ]))
 
   def forward(self, x):
     return self.op(x)
+  
+  def get_hw_cost(self, x, metric):
+    return hw_cost_conv(self.op.conv, x, metric), self.forward(x)
 
   
 #### wrc modified
@@ -70,30 +78,37 @@ class ReLUConvBNSkip(nn.Module):
 
   def __init__(self, C_in, C_out, kernel_size, stride, padding, dilation, affine, track_running_stats=True):
     super(ReLUConvBNSkip, self).__init__()
-    self.op = nn.Sequential(
-      nn.ReLU(inplace=False),
-      nn.Conv2d(C_in, C_out, kernel_size, stride=stride, padding=padding, dilation=dilation, bias=False),
-      nn.BatchNorm2d(C_out, affine=affine, track_running_stats=track_running_stats)
-    )
+    self.op = nn.Sequential(OrderedDict([
+      ('relu', nn.ReLU(inplace=False)),
+      ('conv', nn.Conv2d(C_in, C_out, kernel_size, stride=stride, padding=padding, dilation=dilation, bias=False)),
+      ('bn', nn.BatchNorm2d(C_out, affine=affine, track_running_stats=track_running_stats))
+    ]))
 
   def forward(self, x):
     return self.op(x) + x
+  
+  def get_hw_cost(self, x, metric):
+    return hw_cost_conv(self.op.conv, x, metric), self.forward(x)
 ####
 
 class SepConv(nn.Module):
     
   def __init__(self, C_in, C_out, kernel_size, stride, padding, dilation, affine, track_running_stats=True):
     super(SepConv, self).__init__()
-    self.op = nn.Sequential(
-      nn.ReLU(inplace=False),
-      nn.Conv2d(C_in, C_in, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation, groups=C_in, bias=False),
-      nn.Conv2d(C_in, C_out, kernel_size=1, padding=0, bias=False),
-      nn.BatchNorm2d(C_out, affine=affine, track_running_stats=track_running_stats),
-      )
+    self.op = nn.Sequential(OrderedDict([
+      ('relu', nn.ReLU(inplace=False)),
+      ('conv1', nn.Conv2d(C_in, C_in, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation, groups=C_in, bias=False)),
+      ('conv2', nn.Conv2d(C_in, C_out, kernel_size=1, padding=0, bias=False)),
+      ('bn', nn.BatchNorm2d(C_out, affine=affine, track_running_stats=track_running_stats)),
+    ]))
 
   def forward(self, x):
     return self.op(x)
 
+  def get_hw_cost(self, x, metric):
+    cost1 = hw_cost_conv(self.op.conv1, x, metric)
+    cost2 = hw_cost_conv(self.op.conv2, x, metric)
+    return cost1+cost2, self.forward(x)
 
 class DualSepConv(nn.Module):
     
@@ -106,6 +121,11 @@ class DualSepConv(nn.Module):
     x = self.op_a(x)
     x = self.op_b(x)
     return x
+  
+  def get_hw_cost(self, x, metric):
+    cost1, x = self.op_a.get_hw_cost(x, metric)
+    cost2, x = self.op_b.get_hw_cost(x, metric)
+    return cost1 + cost2, x
 
 
 class ResNetBasicblock(nn.Module):
@@ -141,6 +161,11 @@ class ResNetBasicblock(nn.Module):
     else:
       residual = inputs
     return residual + basicblock
+  
+  def get_hw_cost(self, x, metric):
+    cost1, x = self.conv_a.get_hw_cost(x, metric)
+    cost2, x = self.conv_b.get_hw_cost(x, metric)
+    return cost1 + cost2, x
 
 
 class POOLING(nn.Module):
@@ -159,6 +184,9 @@ class POOLING(nn.Module):
     if self.preprocess: x = self.preprocess(inputs)
     else              : x = inputs
     return self.op(x)
+  
+  def get_hw_cost(self, x, metric):
+    return 0, self.forward(x)
 
 
 class Identity(nn.Module):
@@ -168,6 +196,9 @@ class Identity(nn.Module):
 
   def forward(self, x):
     return x
+  
+  def get_hw_cost(self, x, metric):
+    return 0, self.forward(x)
 
 
 class Zero(nn.Module):
@@ -191,6 +222,9 @@ class Zero(nn.Module):
 
   def extra_repr(self):
     return 'C_in={C_in}, C_out={C_out}, stride={stride}'.format(**self.__dict__)
+  
+  def get_hw_cost(self, x, metric):
+    return 0, self.forward(x)
 
 
 class FactorizedReduce(nn.Module):
@@ -224,5 +258,8 @@ class FactorizedReduce(nn.Module):
     out = self.bn(out)
     return out
 
+  def get_hw_cost(self, x, metric):
+    return hw_cost_conv(self.op.conv, x, metric), self.forward(x)
+      
   def extra_repr(self):
     return 'C_in={C_in}, C_out={C_out}, stride={stride}'.format(**self.__dict__)
