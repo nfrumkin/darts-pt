@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
+from hw_utils import *
 
 OPS = {
     'noise': lambda C, stride, affine: NoiseOp(stride, 0., 1.),
@@ -42,6 +43,8 @@ class NoiseOp(nn.Module):
 
         return noise
 
+    def get_hw_cost(self, x, metric):
+        return 0, self.forward(x)
 
 class ReLUConvBN(nn.Module):
 
@@ -56,6 +59,8 @@ class ReLUConvBN(nn.Module):
     def forward(self, x):
         return self.op(x)
 
+    def get_hw_cost(self, x, metric):
+        return hw_cost_conv(), self.forward(x)
 
 class DilConv(nn.Module):
 
@@ -99,6 +104,9 @@ class Identity(nn.Module):
     def forward(self, x):
         return x
 
+    def get_hw_cost(self, x, metric):
+        return 0, self.forward(x)
+
 
 class Zero(nn.Module):
 
@@ -110,6 +118,9 @@ class Zero(nn.Module):
         if self.stride == 1:
             return x.mul(0.)
         return x[:, :, ::self.stride, ::self.stride].mul(0.)
+
+    def get_hw_cost(self, x, metric):
+        return 0, self.forward(x)
 
 
 class FactorizedReduce(nn.Module):
