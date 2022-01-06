@@ -131,6 +131,7 @@ if args.resume_epoch > 0:
 if args.dev_resume_epoch >= 0:
     log_file += '_dev-resume-{}'.format(args.dev_resume_epoch)
 if args.dev != '':
+    print("dev: ", args.dev)
     log_file += '_dev-{}'.format(args.dev)
     if args.dev == 'proj':
         log_file += '_intv-{}_ED-{}_PCN-{}_PCR-{}'.format(

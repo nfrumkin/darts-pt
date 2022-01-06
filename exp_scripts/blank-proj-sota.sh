@@ -26,10 +26,10 @@ echo 'gpu:' $gpu
 
 cd ../sota/cnn
 python train_search.py \
-    --method blank-next \
+    --method blank-proj \
     --search_space $space --dataset $dataset \
     --seed $seed --save $id --gpu $gpu \
-    --resume_epoch $resume_epoch --resume_expid $resume_expid --dev next \
+    --resume_epoch $resume_epoch --resume_expid $resume_expid --dev proj \
     --edge_decision random \
     --proj_crit_normal acc --proj_crit_reduce acc --proj_crit_edge acc --proj_intv 5 \
     # --fast --log_tag debug \
