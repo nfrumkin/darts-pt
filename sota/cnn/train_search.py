@@ -33,6 +33,7 @@ torch.set_printoptions(precision=4, sci_mode=False)
 parser = argparse.ArgumentParser("sota")
 parser.add_argument('--data', type=str, default='../../data',
                     help='location of the data corpus')
+parser.add_argument('--mode', type=str, default='train', choices=['train', 'proj', 'analyze_hw'])
 parser.add_argument('--dataset', type=str, default='cifar10', help='choose dataset')
 parser.add_argument('--batch_size', type=int, default=64, help='batch size')
 parser.add_argument('--learning_rate', type=float, default=0.025, help='init learning rate')
@@ -285,66 +286,68 @@ def main():
 
     #### main search
     logging.info('starting training at epoch {}'.format(start_epoch))
-    for epoch in range(start_epoch, args.epochs):
-        lr = scheduler.get_lr()[0]
+    if args.mode == "train":
+        for epoch in range(start_epoch, args.epochs):
+            lr = scheduler.get_lr()[0]
 
-        ## data aug
-        if args.cutout:
-            train_transform.transforms[-1].cutout_prob = args.cutout_prob * epoch / (args.epochs - 1)
-            logging.info('epoch %d lr %e cutout_prob %e', epoch, lr, train_transform.transforms[-1].cutout_prob)
-        else:
-            logging.info('epoch %d lr %e', epoch, lr)
-        
-        ## sdarts
-        if args.perturb_alpha:
-            epsilon_alpha = 0.03 + (args.epsilon_alpha - 0.03) * epoch / args.epochs
-            logging.info('epoch %d epsilon_alpha %e', epoch, epsilon_alpha)
+            ## data aug
+            if args.cutout:
+                train_transform.transforms[-1].cutout_prob = args.cutout_prob * epoch / (args.epochs - 1)
+                logging.info('epoch %d lr %e cutout_prob %e', epoch, lr, train_transform.transforms[-1].cutout_prob)
+            else:
+                logging.info('epoch %d lr %e', epoch, lr)
+            
+            ## sdarts
+            if args.perturb_alpha:
+                epsilon_alpha = 0.03 + (args.epsilon_alpha - 0.03) * epoch / args.epochs
+                logging.info('epoch %d epsilon_alpha %e', epoch, epsilon_alpha)
 
-        ## logging
-        num_params = ig_utils.count_parameters_in_Compact(model)
-        genotype = model.genotype()
-        logging.info('param size = %f', num_params)
-        logging.info('genotype = %s', genotype)
-        model.printing(logging)
+            ## logging
+            num_params = ig_utils.count_parameters_in_Compact(model)
+            genotype = model.genotype()
+            logging.info('param size = %f', num_params)
+            logging.info('genotype = %s', genotype)
+            model.printing(logging)
 
-        ## training
-        train_acc, train_obj = train(train_queue, valid_queue, model, architect, model.optimizer, lr, epoch,
-                                     perturb_alpha, epsilon_alpha)
-        logging.info('train_acc %f | train_obj %f', train_acc, train_obj)
-        writer.add_scalar('Acc/train', train_acc, epoch)
-        writer.add_scalar('Obj/train', train_obj, epoch)
+            ## training
+            train_acc, train_obj = train(train_queue, valid_queue, model, architect, model.optimizer, lr, epoch,
+                                        perturb_alpha, epsilon_alpha)
+            logging.info('train_acc %f | train_obj %f', train_acc, train_obj)
+            writer.add_scalar('Acc/train', train_acc, epoch)
+            writer.add_scalar('Obj/train', train_obj, epoch)
 
-        ## scheduler updates (before saving ckpts)
-        scheduler.step()
+            ## scheduler updates (before saving ckpts)
+            scheduler.step()
 
-        ## validation
-        valid_acc, valid_obj = infer(valid_queue, model, log=False)
-        logging.info('valid_acc %f | valid_obj %f', valid_acc, valid_obj)
-        writer.add_scalar('Acc/valid', valid_acc, epoch)
-        writer.add_scalar('Obj/valid', valid_obj, epoch)
+            ## validation
+            valid_acc, valid_obj = infer(valid_queue, model, log=False)
+            logging.info('valid_acc %f | valid_obj %f', valid_acc, valid_obj)
+            writer.add_scalar('Acc/valid', valid_acc, epoch)
+            writer.add_scalar('Obj/valid', valid_obj, epoch)
 
-        test_acc, test_obj = infer(test_queue, model, log=False)
-        logging.info('test_acc %f | test_obj %f', test_acc, test_obj)
-        writer.add_scalar('Acc/test', test_acc, epoch)
-        writer.add_scalar('Obj/test', test_obj, epoch)
+            test_acc, test_obj = infer(test_queue, model, log=False)
+            logging.info('test_acc %f | test_obj %f', test_acc, test_obj)
+            writer.add_scalar('Acc/test', test_acc, epoch)
+            writer.add_scalar('Obj/test', test_obj, epoch)
 
-        ## saving
-        if (epoch + 1) % args.ckpt_interval == 0:
-            save_state_dict = {
-                'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
-                'alpha': model.arch_parameters(),
-                'optimizer': model.optimizer.state_dict(),
-                'arch_optimizer': architect.optimizer.state_dict(),
-                'scheduler': scheduler.state_dict()
-            }
-            ig_utils.save_checkpoint(save_state_dict, False, args.save, per_epoch=True)
-
-    #### projection
-    if args.dev == 'proj':
+            ## saving
+            if (epoch + 1) % args.ckpt_interval == 0:
+                save_state_dict = {
+                    'epoch': epoch + 1,
+                    'state_dict': model.state_dict(),
+                    'alpha': model.arch_parameters(),
+                    'optimizer': model.optimizer.state_dict(),
+                    'arch_optimizer': architect.optimizer.state_dict(),
+                    'scheduler': scheduler.state_dict()
+                }
+                ig_utils.save_checkpoint(save_state_dict, False, args.save, per_epoch=True)
+    
+    if args.mode in ["train", "proj"] and args.dev == 'proj':
+        #### projection
         pt_project(train_queue, valid_queue, model, architect, model.optimizer,
-                   start_epoch, args, infer, perturb_alpha, args.epsilon_alpha)
-
+                   start_epoch, args, infer, analyze_hw, perturb_alpha, args.epsilon_alpha)
+    elif args.mode == "analyze_hw":
+        analyze_hw(test_queue, model)
     writer.close()
 
 
@@ -428,6 +431,29 @@ def infer(valid_queue, model, log=True, _eval=True, weights_dict=None):
                 break
 
     return top1.avg, objs.avg
+
+def analyze_hw(valid_queue, model):
+    tic = time.perf_counter()
+    with torch.no_grad():
+        for step, (input, target) in enumerate(valid_queue):
+            input = input.cuda()
+            target = target.cuda(non_blocking=True)
+            loss, logits = model._loss(input, target, return_logits=True)
+    n_steps = step + 1
+    toc = time.perf_counter()
+    latency = float(toc - tic)
+
+    avg_latency = latency/n_steps
+    total_mem = 0
+
+    print("latency: ", avg_latency)
+    print("n_steps: ", n_steps)
+    
+    mem_params = sum([param.nelement()*param.element_size() for param in model.parameters()])
+    mem_bufs = sum([buf.nelement()*buf.element_size() for buf in model.buffers()])
+    total_mem = (mem_params + mem_bufs)*1e-6 # in Mb
+    print("mem: ", total_mem)
+    return {'latency':avg_latency, 'mem': total_mem} # empty dict
 
 
 if __name__ == '__main__':

@@ -12,7 +12,7 @@ from copy import deepcopy
 torch.set_printoptions(precision=4, sci_mode=False)
 
 
-def project_op(model, proj_queue, args, infer, cell_type, selected_eid=None):
+def project_op(model, proj_queue, args, infer, analyze_hw, cell_type, selected_eid=None):
     ''' operation '''
     #### macros
     num_edges, num_ops = model.num_edges, model.num_ops
@@ -46,6 +46,7 @@ def project_op(model, proj_queue, args, infer, cell_type, selected_eid=None):
         ## proj evaluation
         weights_dict = {cell_type:weights}
         valid_stats = infer(proj_queue, model, log=False, _eval=False, weights_dict=weights_dict)
+        hw_stats = analyze_hw(proj_queue, model)
         crit = valid_stats[crit_idx]
 
         if crit_extrema is None or compare(crit, crit_extrema):
@@ -53,13 +54,18 @@ def project_op(model, proj_queue, args, infer, cell_type, selected_eid=None):
             best_opid = opid
         logging.info('valid_acc  %f', valid_stats[0])
         logging.info('valid_loss %f', valid_stats[1])
-
+        logging.info('valid_latency %f', hw_stats[0])
+        logging.info('valid_mem %f', hw_stats[1])
+        log_str = "op " + str(opid) + " " + str(valid_stats[0]) + " " + str(valid_stats[1]) + " " + str(hw_stats[0]) + " " + str(hw_stats[1])
+        f = open("proj_full_stats.txt", 'a')
+        f.write(log_str+"\n")
+        f.close()
     #### project
     logging.info('best opid: %d', best_opid)
     return selected_eid, best_opid
     
 
-def project_edge(model, proj_queue, args, infer, cell_type):
+def project_edge(model, proj_queue, args, infer, analyze_hw, cell_type):
     ''' topology '''
     #### macros
     candidate_flags = model.candidate_flags_edge[cell_type]
@@ -90,6 +96,7 @@ def project_edge(model, proj_queue, args, infer, cell_type):
 
             ## proj evaluation
             valid_stats = infer(proj_queue, model, log=False, _eval=False, weights_dict=weights_dict)
+            hw_stats = analyze_hw(proj_queue, model)
             crit = valid_stats[crit_idx]
 
             if crit_extrema is None or not compare(crit, crit_extrema): # find out bad edges
@@ -97,6 +104,12 @@ def project_edge(model, proj_queue, args, infer, cell_type):
                 eid_todel = eid
             logging.info('valid_acc %f', valid_stats[0])
             logging.info('valid_loss %f', valid_stats[1])
+            logging.info('valid_latency %f', hw_stats[0])
+            logging.info('valid_mem %f', hw_stats[1])
+            log_str = "edge " + str(eid) + " " + str(valid_stats[0]) + " " + str(valid_stats[1]) + " " + str(hw_stats[0]) + " " + str(hw_stats[1])
+            f = open("proj_full_stats.txt", 'a')
+            f.write(log_str+"\n")
+            f.close()
         eids.remove(eid_todel)
 
     #### project
@@ -105,7 +118,7 @@ def project_edge(model, proj_queue, args, infer, cell_type):
 
 
 def pt_project(train_queue, valid_queue, model, architect, optimizer,
-               epoch, args, infer, perturb_alpha, epsilon_alpha):
+               epoch, args, infer, analyze_hw, perturb_alpha, epsilon_alpha):
     model.train()
     model.printing(logging)
 
@@ -117,6 +130,13 @@ def pt_project(train_queue, valid_queue, model, architect, optimizer,
     logging.info('valid_acc  %f', valid_acc)
     logging.info('valid_loss %f', valid_obj)
 
+    latency, mem = analyze_hw(valid_queue, model)
+    logging.info('valid_latency %f', latency)
+    logging.info('valid_mem %f', mem)
+    log_str = "begin none " + str(valid_acc) + " " + str(valid_obj) + " " + str(latency) + " " + str(mem)
+    f = open("proj_full_stats.txt", 'w')
+    f.write(log_str+"\n")
+    f.close()
     objs = ig_utils.AvgrageMeter()
     top1 = ig_utils.AvgrageMeter()
     top5 = ig_utils.AvgrageMeter()
@@ -166,18 +186,18 @@ def pt_project(train_queue, valid_queue, model, architect, optimizer,
             if epoch < proj_intv * model.num_edges:
                 logging.info('project op')
                 
-                selected_eid_normal, best_opid_normal = project_op(model, proj_queue, args, infer, cell_type='normal')
+                selected_eid_normal, best_opid_normal = project_op(model, proj_queue, args, infer, analyze_hw, cell_type='normal')
                 model.project_op(selected_eid_normal, best_opid_normal, cell_type='normal')
-                selected_eid_reduce, best_opid_reduce = project_op(model, proj_queue, args, infer, cell_type='reduce')
+                selected_eid_reduce, best_opid_reduce = project_op(model, proj_queue, args, infer, analyze_hw, cell_type='reduce')
                 model.project_op(selected_eid_reduce, best_opid_reduce, cell_type='reduce')
 
                 model.printing(logging)
             else:
                 logging.info('project edge')
                 
-                selected_nid_normal, eids_normal = project_edge(model, proj_queue, args, infer, cell_type='normal')
+                selected_nid_normal, eids_normal = project_edge(model, proj_queue, args, infer, analyze_hw, cell_type='normal')
                 model.project_edge(selected_nid_normal, eids_normal, cell_type='normal')
-                selected_nid_reduce, eids_reduce = project_edge(model, proj_queue, args, infer, cell_type='reduce')
+                selected_nid_reduce, eids_reduce = project_edge(model, proj_queue, args, infer, analyze_hw, cell_type='reduce')
                 model.project_edge(selected_nid_reduce, eids_reduce, cell_type='reduce')
 
                 model.printing(logging)
@@ -237,6 +257,14 @@ def pt_project(train_queue, valid_queue, model, architect, optimizer,
         logging.info('valid_acc  %f', valid_acc)
         logging.info('valid_loss %f', valid_obj)
 
+        latency, mem = analyze_hw(valid_queue, model)
+        logging.info('valid_latency %f', latency)
+        logging.info('valid_mem %f', mem)
+
+        log_str = "begin none " + str(valid_acc) + " " + str(valid_obj) + " " + str(latency) + " " + str(mem)
+        f = open("proj_full_stats.txt", 'a')
+        f.write(log_str+"\n")
+        f.close()
 
     logging.info('projection finished')
     model.printing(logging)
