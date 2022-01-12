@@ -449,6 +449,7 @@ def analyze_hw(valid_queue, model):
     print("latency: ", avg_latency)
     print("n_steps: ", n_steps)
     
+    # calculation taken from https://discuss.pytorch.org/t/gpu-memory-that-model-uses/56822/2
     mem_params = sum([param.nelement()*param.element_size() for param in model.parameters()])
     mem_bufs = sum([buf.nelement()*buf.element_size() for buf in model.buffers()])
     total_mem = (mem_params + mem_bufs)*1e-6 # in Mb

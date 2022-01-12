@@ -52,11 +52,14 @@ def project_op(model, proj_queue, args, infer, analyze_hw, cell_type, selected_e
         if crit_extrema is None or compare(crit, crit_extrema):
             crit_extrema = crit
             best_opid = opid
+        
+        latency = hw_stats['latency']
+        mem = hw_stats['mem']
         logging.info('valid_acc  %f', valid_stats[0])
         logging.info('valid_loss %f', valid_stats[1])
-        logging.info('valid_latency %f', hw_stats[0])
-        logging.info('valid_mem %f', hw_stats[1])
-        log_str = "op " + str(opid) + " " + str(valid_stats[0]) + " " + str(valid_stats[1]) + " " + str(hw_stats[0]) + " " + str(hw_stats[1])
+        logging.info('valid_latency %f', latency)
+        logging.info('valid_mem %f', mem)
+        log_str = "op " + str(opid) + " " + str(valid_stats[0]) + " " + str(valid_stats[1]) + " " + str(latency) + " " + str(mem)
         f = open("proj_full_stats.txt", 'a')
         f.write(log_str+"\n")
         f.close()
@@ -102,11 +105,14 @@ def project_edge(model, proj_queue, args, infer, analyze_hw, cell_type):
             if crit_extrema is None or not compare(crit, crit_extrema): # find out bad edges
                 crit_extrema = crit
                 eid_todel = eid
+            
+            latency = hw_stats['latency']
+            mem = hw_stats['mem']
             logging.info('valid_acc %f', valid_stats[0])
             logging.info('valid_loss %f', valid_stats[1])
-            logging.info('valid_latency %f', hw_stats[0])
-            logging.info('valid_mem %f', hw_stats[1])
-            log_str = "edge " + str(eid) + " " + str(valid_stats[0]) + " " + str(valid_stats[1]) + " " + str(hw_stats[0]) + " " + str(hw_stats[1])
+            logging.info('valid_latency %f', latency)
+            logging.info('valid_mem %f', mem)
+            log_str = "edge " + str(eid) + " " + str(valid_stats[0]) + " " + str(valid_stats[1]) + " " + str(latency) + " " + str(mem)
             f = open("proj_full_stats.txt", 'a')
             f.write(log_str+"\n")
             f.close()
@@ -130,7 +136,9 @@ def pt_project(train_queue, valid_queue, model, architect, optimizer,
     logging.info('valid_acc  %f', valid_acc)
     logging.info('valid_loss %f', valid_obj)
 
-    latency, mem = analyze_hw(valid_queue, model)
+    hw_stats = analyze_hw(valid_queue, model)
+    latency = hw_stats['latency']
+    mem = hw_stats['mem']
     logging.info('valid_latency %f', latency)
     logging.info('valid_mem %f', mem)
     log_str = "begin none " + str(valid_acc) + " " + str(valid_obj) + " " + str(latency) + " " + str(mem)
@@ -257,11 +265,13 @@ def pt_project(train_queue, valid_queue, model, architect, optimizer,
         logging.info('valid_acc  %f', valid_acc)
         logging.info('valid_loss %f', valid_obj)
 
-        latency, mem = analyze_hw(valid_queue, model)
+        hw_stats = analyze_hw(valid_queue, model)
+        latency = hw_stats['latency']
+        mem = hw_stats['mem']
         logging.info('valid_latency %f', latency)
         logging.info('valid_mem %f', mem)
 
-        log_str = "begin none " + str(valid_acc) + " " + str(valid_obj) + " " + str(latency) + " " + str(mem)
+        log_str = "end none " + str(valid_acc) + " " + str(valid_obj) + " " + str(latency) + " " + str(mem)
         f = open("proj_full_stats.txt", 'a')
         f.write(log_str+"\n")
         f.close()
